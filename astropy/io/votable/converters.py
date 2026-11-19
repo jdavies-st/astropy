@@ -544,6 +544,11 @@ class VarArray(Array):
 
     def output(self, value, mask):
         output = self._base.output
+        # *mask* is for the cell as a whole.  Which elements are masked is
+        # in the mask of *value*.
+        element_mask = ma.getmask(value)
+        if element_mask is not ma.nomask:
+            mask = mask | element_mask
         result = [output(x, m) for x, m in np.broadcast(value, mask)]
         return " ".join(result)
 

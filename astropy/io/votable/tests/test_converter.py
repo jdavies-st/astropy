@@ -9,7 +9,7 @@ from numpy.testing import assert_array_equal
 
 # LOCAL
 from astropy.io.votable import converters, exceptions, tree
-from astropy.io.votable.table import parse_single_table
+from astropy.io.votable.table import parse, parse_single_table
 from astropy.utils.data import get_pkg_data_filename
 
 
@@ -319,6 +319,75 @@ def test_vararray():
         table.array[i] = values
     buff = io.BytesIO()
     votable.to_xml(buff)
+
+
+def _one_cell_votable(datatype, arraysize, cell, values=""):
+    """
+    A VOTable file with one column *c* and one row, holding *cell*.  *values*
+    is the VALUES element of the FIELD, if any.
+    """
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<VOTABLE version="1.4" xmlns="http://www.ivoa.net/xml/VOTable/v1.3">
+ <RESOURCE>
+  <TABLE>
+   <FIELD ID="c" name="c" datatype="{datatype}" arraysize="{arraysize}">
+    {values}
+   </FIELD>
+   <DATA><TABLEDATA><TR><TD>{cell}</TD></TR></TABLEDATA></DATA>
+  </TABLE>
+ </RESOURCE>
+</VOTABLE>""".encode()
+
+
+def test_vararray_masked_element_tabledata():
+    """
+    to_xml() of a double arraysize="*" cell with its second element masked
+    writes that element as "NaN" in TABLEDATA, and it is masked when read back.
+    """
+    votable = parse(io.BytesIO(_one_cell_votable("double", "*", "1 2 3")))
+    votable.get_first_table().array["c"][0][1] = np.ma.masked
+    written = io.BytesIO()
+    votable.to_xml(written, tabledata_format="tabledata")
+
+    assert b"<TD>1 NaN 3</TD>" in written.getvalue()
+    written.seek(0)
+    cell = parse_single_table(written).array["c"][0]
+    assert cell.mask.tolist() == [False, True, False]
+
+
+def test_vararray_masked_element_tabledata_null():
+    """
+    to_xml() of an int arraysize="*" cell with its second element masked
+    writes that element as the null value of the FIELD in TABLEDATA, and it is
+    masked when read back.
+    """
+    data = _one_cell_votable("int", "*", "1 2 3", values='<VALUES null="-1"/>')
+    votable = parse(io.BytesIO(data))
+    votable.get_first_table().array["c"][0][1] = np.ma.masked
+    written = io.BytesIO()
+    votable.to_xml(written, tabledata_format="tabledata")
+
+    assert b"<TD>1 -1 3</TD>" in written.getvalue()
+    written.seek(0)
+    cell = parse_single_table(written).array["c"][0]
+    assert cell.mask.tolist() == [False, True, False]
+
+
+def test_array_vararray_masked_element_tabledata():
+    """
+    to_xml() of an arraysize="2x*" cell with one element masked writes that
+    element as "NaN" in TABLEDATA, and only that element is masked when read
+    back.
+    """
+    votable = parse(io.BytesIO(_one_cell_votable("double", "2x*", "1 2 3 4")))
+    votable.get_first_table().array["c"][0][0, 1] = np.ma.masked
+    written = io.BytesIO()
+    votable.to_xml(written, tabledata_format="tabledata")
+
+    assert b"<TD>1 NaN 3 4</TD>" in written.getvalue()
+    written.seek(0)
+    cell = parse_single_table(written).array["c"][0]
+    assert cell.mask.tolist() == [[False, True], [False, False]]
 
 
 def test_gemini_v1_2():
